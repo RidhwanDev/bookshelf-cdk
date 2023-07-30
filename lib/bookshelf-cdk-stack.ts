@@ -1,11 +1,18 @@
 import * as cdk from "aws-cdk-lib";
 import { CfnOutput, RemovalPolicy } from "aws-cdk-lib";
 import {
+  AuthorizationType,
+  GraphqlApi,
+  MappingTemplate,
+  SchemaFile,
+} from "aws-cdk-lib/aws-appsync";
+import {
   AccountRecovery,
   OAuthScope,
   UserPool,
   UserPoolClient,
 } from "aws-cdk-lib/aws-cognito";
+import { AttributeType, Table } from "aws-cdk-lib/aws-dynamodb";
 import { Construct } from "constructs";
 
 export class BookshelfCdkStack extends cdk.Stack {
@@ -57,12 +64,113 @@ export class BookshelfCdkStack extends cdk.Stack {
       },
     });
 
+    const graphqlApi = new GraphqlApi(this, "BooksApi", {
+      name: "books-graphqlApi",
+      schema: SchemaFile.fromAsset("graphql/schema.graphql"),
+      authorizationConfig: {
+        defaultAuthorization: {
+          authorizationType: AuthorizationType.USER_POOL,
+          userPoolConfig: {
+            userPool: cognito,
+          },
+        },
+        additionalAuthorizationModes: [
+          {
+            authorizationType: AuthorizationType.API_KEY,
+            apiKeyConfig: {
+              name: "GraphQLBooksApiKey",
+              description: "Books API Key",
+              expires: cdk.Expiration.after(cdk.Duration.days(365)),
+            },
+          },
+        ],
+      },
+      xrayEnabled: true,
+    });
+
+    const booksTable = new Table(this, "BooksTable", {
+      partitionKey: {
+        name: "id",
+        type: AttributeType.STRING,
+      },
+    });
+
+    const bookDs = graphqlApi.addDynamoDbDataSource("BookTableDs", booksTable);
+
+    graphqlApi.createResolver("GetBook", {
+      typeName: "Query",
+      fieldName: "getBook",
+      dataSource: bookDs,
+      requestMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamoGetItem.request.vtl"
+      ),
+      responseMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamo.response.vtl"
+      ),
+    });
+
+    graphqlApi.createResolver("ListBooks", {
+      typeName: "Query",
+      fieldName: "listBooks",
+      dataSource: bookDs,
+      requestMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamoListItem.request.vtl"
+      ),
+      responseMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamo.response.vtl"
+      ),
+    });
+
+    graphqlApi.createResolver("CreateBook", {
+      typeName: "Mutation",
+      fieldName: "createBook",
+      dataSource: bookDs,
+      requestMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamoCreateItem.request.vtl"
+      ),
+      responseMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamo.response.vtl"
+      ),
+    });
+
+    graphqlApi.createResolver("UpdateBook", {
+      typeName: "Mutation",
+      fieldName: "updateBook",
+      dataSource: bookDs,
+      requestMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamoUpdateItem.request.vtl"
+      ),
+      responseMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamo.response.vtl"
+      ),
+    });
+
+    graphqlApi.createResolver("DeleteBook", {
+      typeName: "Mutation",
+      fieldName: "deleteBook",
+      dataSource: bookDs,
+      requestMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamoDeleteItem.request.vtl"
+      ),
+      responseMappingTemplate: MappingTemplate.fromFile(
+        "graphql/vtl/dynamo.response.vtl"
+      ),
+    });
+
     new CfnOutput(this, "UserPoolId", {
       value: cognito.userPoolId || "",
     });
 
     new CfnOutput(this, "UserPoolClientId", {
       value: userPoolClient.userPoolClientId || "",
+    });
+
+    new CfnOutput(this, "GraphQLBooksURL", {
+      value: graphqlApi.graphqlUrl,
+    });
+
+    new CfnOutput(this, "GraphQLBooksApiKey", {
+      value: graphqlApi.apiKey || "",
     });
   }
 }
