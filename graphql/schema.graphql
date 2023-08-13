@@ -102,6 +102,7 @@ input UpdateBookInput {
   favourite: Boolean
   previewLink: String
   infoLink: String
+  status: BookStatus
 }
 
 type Mutation {
